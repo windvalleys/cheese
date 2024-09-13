@@ -1,0 +1,315 @@
+---
+title: "Cheese"
+author: "Yara Goldina"
+date: "2024-06-18"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+```{r, echo=FALSE}
+
+cheeses <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2024/2024-06-04/cheeses.csv')
+library(tidyverse)
+library(dplyr)
+```
+## Introduction
+
+Cheese. Mozzarella, gouda, cheddar, and so many more. Cheese is a diverse and popular product used in cuisine all over the world. There are over one thousand different cheeses around the world. But what exactly makes these cheeses different? And how much variety is there for those with various dietary restrictions?
+
+## Dataset
+
+The dataset used contains 1187 cheeses from cheese.com, with 248 of those having a listed fat content. The variables used include the following:  
+  
+Quantitative:  
+
+* cheese: the name of the cheese
+* milk: the milk used to make the cheese
+* country: country or countries of origin of cheese
+* family: the family the cheese belongs to 
+* vegetarian: whether the cheese is considered vegetarian
+* vegan: whether the cheese is considered vegan
+* dietary: a number representing if the cheese is 0 = non-vegetarian, 1 = vegetarian, or 2 = vegan.
+
+  
+Qualitative variables:
+
+* fat_content: the fat content of the cheese as a percentage  
+
+ADD FAMILY VS FAT CONTENT
+
+## Research Questions  
+  
+* Are there any significant relationships between fat content, milk, and family?
+* How do vegetarian cheeses compare to non-vegetarian cheeses?
+* How does cheese quantity and fat content compare by country?  
+
+
+## Question 1: Are there any significant relationships between fat content, milk, and family? 
+
+The first question of interest has three variables to examine. We start with comparing the fat content of cheeses made from various milks by plotting faceted density histograms. Since some cheeses can be made with different milks and have multiple listed, when examining milks in this project we expanded the data so that a cheese may appear more than once with different milk types. 
+
+```{r, echo = FALSE}
+
+# convert fat_content column to percentages
+convert_fat <- function(fat_content) {
+  fat_content <- gsub("%", "", fat_content)
+  if (grepl("-", fat_content)) {
+    range_vals <- unlist(strsplit(fat_content, split = "-"))
+    return(mean(as.numeric(range_vals)))
+  }
+  else {
+    return(as.numeric(fat_content))
+  }
+}
+cheeses$fat_content <- sapply(cheeses$fat_content, FUN = convert_fat)
+
+# exclude milks that are unknown
+filtered_cheeses <- cheeses %>%
+  filter(!is.na(milk))
+
+expanded_cheeses <- filtered_cheeses %>%
+  separate_rows(milk, sep = ",\\s*")
+
+top_milk <- expanded_cheeses %>%
+  count(milk, sort = TRUE) %>%
+  top_n(3) %>%
+  pull(milk)
+
+filt_exp_cheeses <- expanded_cheeses %>%
+  filter(milk %in% top_milk)
+
+filt_exp_cheeses %>%
+  ggplot(aes(x = fat_content)) +
+  geom_histogram(alpha = 0.5, binwidth = 10, color = "black", fill = "lightpink", 
+                 aes(y= after_stat(density))) +
+  facet_wrap(~milk) +
+  geom_density() +
+  labs(title = "Fat Content Distribution of Top Milks", 
+       x = "Fat Content (%)", y = "Density")
+
+
+```
+Looking at the distribution of fat content among the top milks, there do not appear to be significant differences. However, to double check this, we run the Kolmogorov-Smirnov test to double check the distributions and ANOVA to check if there is a significant difference in means. 
+
+```{r, echo = FALSE}
+fat_cow <- filter(cheeses, milk == "cow")$fat_content
+fat_goat <- filter(cheeses, milk == "goat")$fat_content
+fat_sheep <- filter(cheeses, milk == "sheep")$fat_content
+
+ks.test(fat_cow, fat_goat)
+ks.test(fat_cow, fat_sheep)
+ks.test(fat_sheep, fat_goat)
+
+anova_milk <- aov(fat_content ~  milk, data = filt_exp_cheeses)
+summary(anova_milk)
+```
+
+For every combination of milks, we see that the p-value is above 0.05, and as such we fail to reject the null hypothesis of the distribution of milks being the same. However, our ANOVA result suggests that there is suffient evidence that at least one of the means is significantly different from the others. To look into this further, we run Tukey's HSD. 
+
+```{r, echo = FALSE}
+print(TukeyHSD(anova_milk))
+```
+Here we can see that on average, goat milk has 5.07% less fat than cow milk, sheep milk has 0.51% more fat than cow milk and 5.59% more fat than goat milk. The biggest differences here are those between goat milk and the other two. Looking over to the p-values, we see that the only significant result we have is the difference between goat and cow milk, with adjusted p-value of 0.049 which is less than 0.05. Thus we are able to conclude that there is a significant difference between the means of the fat content of goat milk and cow milk, but none of the other combinations. This brings us to believe that cheeses made with goat milk contain less fat on average than those made with cow milk.  
+  
+Looking further, we examine the fat content among the top families of cheeses using a density plot. 
+
+```{r, echo=FALSE}
+top_fams <- cheeses %>%
+  count(family, sort = TRUE) %>%
+  top_n(5) %>%
+  pull(family)
+
+filt_fams_cheeses <- cheeses %>%
+  filter(!is.na(family)) %>%
+  filter(family %in% top_fams)
+
+filt_fams_cheeses %>%
+  ggplot(aes(x = fat_content)) + 
+  geom_density(aes(fill = family), color = "black", alpha = 0.3) + 
+  labs(title = "Density of Fat Content vs Cheese Family", 
+       x = "Fat Content (%)", y = "Density")
+
+```
+  
+We can see that all of the cheeses have the fat content spread out quite a bit, other than the Gouda cheese which seems to mainly be gathered between 30 and 50%. The peaks appear to be quite different for many of the families, so we use ANOVA once again to check the significance of that.
+
+```{r, echo=FALSE}
+anova_fam <- aov(fat_content ~ family, data = filt_fams_cheeses)
+summary(anova_fam)
+```
+The ANOVA result shows us a p-value of 0.419, which is quite a bit greater than 0.05, so we do not have sufficient evidence to reject the null that the means are equal.  
+  
+The final relationship we have to examine for our first question is family and milk type. To do this, we use a mosaic plot. 
+
+```{r, echo = FALSE}
+
+filtered_cheeses2 <- filt_fams_cheeses %>%
+  filter(milk %in% top_milk) %>%
+  filter(!is.na(family))
+
+milk_fam <- table(filtered_cheeses2$milk, filtered_cheeses2$family)
+mosaicplot(milk_fam, shade = TRUE, las = 1, main = "Cheese Family vs Milk Type") 
+```
+  
+With this, we can see that milk type does seem to have a significant effect on cheese family. We can see that Pecorino cheese appears to use sheep milk more often and cow milk less often. Gouda appears to use more goat milk, Cheddar uses more cow milk, and both Brie and Cheddar use less sheep cheese. We confirm the significance with a chi-square test. 
+
+```{r, echo = FALSE}
+chisq.test((milk_fam))
+```
+  
+With a p-value of much less than 0.05, we can confidently reject the null hypothesis and conclude that the milk type does indeed affect the family of the cheese.   
+  
+With these results, we can make the following conclusions to our first question:
+* Cheeses made with goat milk have less fat than those made with cow milk, on average
+* There is not enough evidence to conclude that family and fat content affect each other
+* Milk type has a significant effect on the family of the cheese. 
+
+## Question 2: How do vegetarian cheeses compare to non-vegetarian cheeses?
+
+Non-vegetarian cheeses are made using animal rennet, an enzyme that comes from the stomach lining of some animals, which helps curdle the milk. But is there a significant difference in the fat content or milks used? First, we take a look at the distributions of milk based on dietary restriction.
+
+```{r, echo = FALSE}
+# new column -> 2 = vegan, 1 = vegetarian, 0 = not vegan or vegetarian
+veg_combine <- function(vegan, vegetarian){
+  if (is.na(vegan) | is.na(vegetarian)) {
+    return(NA)
+  }
+  if (vegan == TRUE) {
+    return(2)
+  } else {
+    if(vegetarian == TRUE){
+      return(1)
+    }
+    return(0)
+  }
+}
+cheeses$dietary <- mapply(FUN = veg_combine, cheeses$vegan, cheeses$vegetarian)
+```
+
+```{r, echo = FALSE}
+expanded_cheeses <- cheeses %>%
+  separate_rows(milk, sep = ",\\s*")
+
+filtered_cheeses_diet <- expanded_cheeses %>%
+  filter(!is.na(dietary)) %>%
+  filter(!is.na(milk))
+
+filtered_cheeses_diet %>%
+  ggplot(aes(x = factor(dietary), fill = milk)) +
+  geom_bar() +
+  scale_x_discrete(labels = c('Non-Vegetarian', 'Vegetarian', 'Vegan')) +
+  labs(title = "Types of Milk Used", x = "Dietary Restrictions", y = "Count")
+
+```
+  
+From the stacked bar plot above, we can see the three most used cheeses are cow, goat, and sheep, and they appear to be pretty equally distributed between non-vegetarian and vegetarian cheese. While vegan cheeses are, predictably, made with plant-based milks, we unfortunately only have data on 6 of them and as such will exclude them from this portion of the study.  
+  
+We start by taking a look at the milk type vs the dietary restrictions of the cheese.
+
+```{r}
+table_milk_veg<- table(filt_exp_cheeses$vegetarian, filt_exp_cheeses$milk )
+mosaicplot(table_milk_veg, shade = TRUE, las = 1, main = "Milk Type vs Vegetarian Cheese")
+chisq.test(table_milk_veg)
+
+```
+Our mosaic plot shows that there appears to be significant relationship between the milk used and whether or not the cheese is vegetarian. This is confirmed by the Chi-squared test of independence, which gives us a p-value of 0.74. As such, there is no sufficient evidence to reject the null hypothesis of the two variables being independent.  
+  
+We go on to take a look at the differences in fat content using faceted density plots again.
+
+```{r}
+veg_filtered <- filtered_cheeses_diet %>%
+  filter(dietary == c(0, 1))
+veg_filtered %>%
+  ggplot(aes(x = fat_content)) +
+  geom_histogram(binwidth = 10, color = "black", fill = "lightpink", aes(y= after_stat(density))) +
+  facet_wrap(~dietary, labeller = as_labeller(c('0' = 'Non-Vegetarian', '1' = 'Vegetarian'))) +
+  labs(title = "Fat content of Vegetarian vs Non-Vegetarian Cheese", 
+       x = "Fat Content (%)") +
+  geom_density() 
+```
+  
+The distributions appear to be quite similar, and while the peak of the vegetarian density line appears higher, it does appear to be at a similar fat content percentage. To double check significance, we run a KS test and a T test. 
+
+```{r}
+fat_veg <- filter(cheeses, vegetarian == TRUE)$fat_content
+fat_notveg <- filter(cheeses, vegetarian == FALSE)$fat_content
+
+ks.test(fat_veg, fat_notveg)
+t.test(fat_veg, fat_notveg)
+
+```
+  
+With both p-values above 0.05, we can conclude that there is no evidence to suggest the distribution of fat content or the average fat content are different between vegetarian and non vegetarian cheese. Overall, there does not appear to be much of a difference between the two groups of cheeses, with neither milk type not fat content playing a role in the dietary restriction of the cheese.
+
+## Question 3: How does cheese quantity and fat content compare by country? 
+
+Where should we go on vacation to eat cheese? Where is all the cheese? We take a look on a map.
+
+
+```{r}
+library(maps)
+world_map <- map_data("world")
+
+country_cheeses <- cheeses %>%
+  separate_rows(country, sep = ",\\s*")
+
+world_map <- world_map %>%
+  mutate(region = ifelse(region == "USA", "United States", region))
+
+country_counts <- table(country_cheeses$country)
+country_counts <- as.data.frame(country_counts)
+
+merged_cheeses <- merge(world_map, country_counts,
+                        by.x = "region", by.y = "Var1", all.x = TRUE)
+
+
+ggplot(merged_cheeses, aes(x = long, y = lat, group = group, fill = Freq)) +
+  geom_polygon() +
+  scale_fill_gradient(low = "lightgreen", high = "blue", name = "Number of Cheeses") +
+  theme_void() +
+  coord_fixed() 
+```
+  
+We can see here that right here in the United States we have have the most cheeses, with over 300. However, it is important to keep in mind that the data all comes from cheese.com, which may be lacking in data on cheeses from other places in the world. However, if the goal is to sample as many cheeses as possible from cheese.com, the US is a great place to be. The top countries represented by cheese.com are the following:
+
+* United States: 318 cheeses
+* France: 176 cheeses
+* Italy: 153 cheeses
+* United Kingdom: 96 cheeses
+
+But we may also want to know the fat content. 
+
+```{r}
+avg_fat <- cheeses %>%
+  group_by(country) %>%
+  summarise(avg_fat = mean(fat_content, na.rm = TRUE))
+
+merged_cheeses_fat <- merge(world_map, avg_fat,
+                        by.x = "region", by.y = "country", all.x = TRUE)
+
+ggplot(merged_cheeses_fat, aes(x = long, y = lat, group = group, fill = avg_fat)) +
+  geom_polygon() +
+  scale_fill_gradient(low = "lightgreen", high = "blue", name = "Average Fat Content of Cheese (%)") +
+  theme_void() +
+  coord_fixed() 
+
+```
+
+On average, the United Kingdom has the most fat content in their cheese. We find the following fat contents on average:
+
+1. United Kingdom: 52%
+2. Germany: 50.36%
+3. Lithuania, Hungary, Croatia: 50%
+
+With these two graphs, we find that other than the US, Europe is a very good place to go for large quantities of cheeses and that countries in Europe also have cheese with the highest average fat content.
+
+## Conclusion:
+
+Unfortunately, with lacking data, our research was limited. With so little data on calcium content, we were unable to explore the possible relationships between that and the other variables explored in this project. Furthermore, with so few vegan cheeses and cheeses made with milks other than the top three, a full exploration of dietary restrictions could not be made. Since many cheeses did not have values for every variable, there were limitations in how much we could explore, like the Pecorino cheeses having the milk type but no listed fat content. With more detailed data, these relationships could be explored further and more accurately. 
+  
+However, there was still much to be found. We were able to find that cheese made with goat milk averages less fat than those made with cow milk, though there is not enough evidence to suggest differences between the other milks. Furthermore, we found there appear to be no significant differences between vegetarian and non-vegetarian cheeses, allowing vegetarians to also enjoy various cheeses. And finally, we had a good look at some options for future travel plans based off of cheese (Europe is a great option). While there is much more to be learned, we were able to find quite a bit with what we had. 
